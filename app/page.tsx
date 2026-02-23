@@ -7,9 +7,9 @@ export default function Home() {
       </p>
 
       <div style={{ display: "flex", gap: 12 }}>
-        <a href="/today">进入 Today</a>
-        <a href="/interrupt">进入 Interrupt（下一步做）</a>
-        <a href="/streak">进入 Streak（后面做）</a>
+<a href="/today">进入 Today</a>
+<a href="/interrupt">进入 Interrupt</a>
+<a href="/streak">进入 Streak</a>
       </div>
 
       <hr style={{ margin: "20px 0" }} />
