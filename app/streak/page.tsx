@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { fetchCloudData, pushLocalToCloud } from "@/lib/cloud"; 
+
 
 type Session = {
   id: string;
@@ -68,21 +70,39 @@ export default function StreakPage() {
   const [importText, setImportText] = useState("");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [interrupts, setInterrupts] = useState<InterruptLog[]>([]);
+const [pushing, setPushing] = useState(false);
+const [pushMsg, setPushMsg] = useState<string | null>(null);
 
-  useEffect(() => {
+useEffect(() => {
+  (async () => {
     try {
-      const raw = localStorage.getItem(SESSIONS_KEY);
-      setSessions(raw ? JSON.parse(raw) : []);
-    } catch {
-      setSessions([]);
+      const { sessions, interrupts } = await fetchCloudData();
+      setCloudInfo({ sessions: sessions.length, interrupts: interrupts.length });
+      setCloudErr(null);
+    } catch (e: any) {
+      setCloudErr(e?.message ?? String(e));
     }
-    try {
-      const raw = localStorage.getItem(INTERRUPTS_KEY);
-      setInterrupts(raw ? JSON.parse(raw) : []);
-    } catch {
-      setInterrupts([]);
-    }
-  }, []);
+  })();
+}, []);
+
+async function onPushToCloud() {
+  setPushing(true);
+  setPushMsg(null);
+  try {
+    const res = await pushLocalToCloud(sessions, interrupts);
+    setPushMsg(`✅ 已推送：sessions ${res.sessions} 条；interrupts ${res.interrupts} 条`);
+
+    // 推完再拉一次云端数量刷新显示
+    const fresh = await fetchCloudData();
+    setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
+  } catch (e: any) {
+    setPushMsg(`❌ 推送失败：${e?.message ?? String(e)}`);
+  } finally {
+    setPushing(false);
+  }
+}
+const [cloudInfo, setCloudInfo] = useState<{ sessions: number; interrupts: number } | null>(null);
+const [cloudErr, setCloudErr] = useState<string | null>(null);
 
   const now = new Date();
   const { weekStart, weekEnd } = getWeekRange(now);
@@ -132,8 +152,7 @@ const todayFocusCount = todaySessions.filter((s) => s.status === "done" || s.sta
         <h1 style={{ fontSize: 24, margin: 0 }}>Streak（汇总仪表盘）</h1>
         <a href="/" style={{ fontSize: 14 }}>← 返回首页</a>
       </div>
-
-      <section style={{ marginTop: 16, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+ <section style={{ marginTop: 16, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
        <div style={{ padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
   <div style={{ fontSize: 13, opacity: 0.75 }}>今日完成次数</div>
   <div style={{ fontSize: 40, fontWeight: 800 }}>{metrics.todayFocusCount}</div>
@@ -161,26 +180,32 @@ const todayFocusCount = todaySessions.filter((s) => s.status === "done" || s.sta
         </div>
       </section>
 
-      <section style={{ marginTop: 16, padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
-        <h2 style={{ fontSize: 18, marginTop: 0 }}>今天的专注记录</h2>
-        {metrics.todaySessions.length === 0 ? (
-          <p style={{ opacity: 0.7 }}>
-            今天还没有专注记录。去 <a href="/today">Today</a> 开始 20min 或记录一次“有进度”。
-          </p>
-        ) : (
-          <div style={{ display: "grid", gap: 10 }}>
-            {metrics.todaySessions.map((s) => (
-              <div key={s.id} style={{ padding: 12, border: "1px solid #eee", borderRadius: 10 }}>
-                <div style={{ fontWeight: 700 }}>{s.taskTitle}</div>
-                <div style={{ fontSize: 13, opacity: 0.8 }}>
-                  状态：{s.status} ｜ 计划：{s.plannedMinutes} min ｜ 结束：{new Date(s.endedAt).toLocaleString()}
-                </div>
-                {s.note ? <div style={{ marginTop: 6, fontSize: 13 }}>{s.note}</div> : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+     <section style={{ marginTop: 16, padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
+  <div style={{ fontWeight: 700 }}>云同步状态（Supabase）</div>
+
+  {cloudErr ? (
+    <div style={{ color: "crimson", marginTop: 8 }}>读取失败：{cloudErr}</div>
+  ) : cloudInfo ? (
+    <div style={{ marginTop: 8, opacity: 0.85 }}>
+      云端 sessions：{cloudInfo.sessions} 条；interrupts：{cloudInfo.interrupts} 条
+    </div>
+  ) : (
+    <div style={{ marginTop: 8, opacity: 0.7 }}>读取中...</div>
+  )}
+
+  {/* ✅按钮放在三元表达式结束之后，这里最安全 */}
+  <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
+    <button
+      onClick={onPushToCloud}
+      disabled={pushing}
+      style={{ padding: "10px 14px" }}
+    >
+      {pushing ? "推送中..." : "推送本地到云端"}
+    </button>
+
+    {pushMsg ? <span style={{ fontSize: 13, opacity: 0.85 }}>{pushMsg}</span> : null}
+  </div>
+</section>
 
       <section style={{ marginTop: 16, padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
         <h2 style={{ fontSize: 18, marginTop: 0 }}>今天的拦截记录</h2>
