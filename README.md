@@ -35,3 +35,17 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 Deployed on Vercel.
+
+## 今日进度（YYYY-MM-DD）
+- 完成 Supabase 邮箱登录（magic link）
+- 修复 auth callback 会话交换问题（兼容 code / 非 code 情况）
+- 完成 /streak 云同步状态展示
+- 完成“推送本地到云端”按钮逻辑
+- Supabase 已建表：sessions / interrupts，并配置 RLS policy
+- 当前状态：登录成功，推送成功（0 条/可正常返回成功提示）
+
+## 下次继续（优先级）
+1. 在 today / interrupt 页面写入 Supabase（不只本地）
+2. 做“从云端拉取覆盖本地 / 合并”功能
+3. 优化 /streak 页面去重与 UI
+4. 部署到 Vercel 并验证生产环境登录回调
