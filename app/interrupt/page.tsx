@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { tryAutoSync } from "@/lib/autoSync";
 
 type Mode = "idle" | "cooldown" | "choose" | "break";
 
@@ -50,6 +51,7 @@ export default function InterruptPage() {
     setLogs(next);
     try {
       localStorage.setItem(LS_KEY, JSON.stringify(next));
+      tryAutoSync();
     } catch {
       // ignore
     }

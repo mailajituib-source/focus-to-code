@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import AuthStatus from "@/app/components/AuthStatus";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,9 +25,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        {children}
-      </body>
+      <body>
+  <div style={{ padding: "12px 16px", display: "flex", justifyContent: "flex-end" }}>
+    <AuthStatus />
+  </div>
+
+  {children}
+</body>
     </html>
   );
 }

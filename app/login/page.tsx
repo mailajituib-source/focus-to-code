@@ -13,16 +13,14 @@ async function sendLink() {
 
   try {
     const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
+  email,
+  options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+});
 
-    if (error) {
-      setMsg("发送失败：" + error.message);
-      return;
-    }
+if (error) {
+  console.error("signInWithOtp error:", error);
+  setMsg(`发送失败：${error.message}`);
+}
 
     setMsg("✅ 已发送登录链接，请检查邮箱");
   } catch (e: any) {

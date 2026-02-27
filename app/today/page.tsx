@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { tryAutoSync } from "@/lib/autoSync";
 
 type Task = {
   id: string;
@@ -104,6 +105,7 @@ export default function TodayPage() {
     setSessions(next);
     try {
       localStorage.setItem(LS_KEY, JSON.stringify(next));
+      tryAutoSync();
     } catch {
       // ignore
     }
