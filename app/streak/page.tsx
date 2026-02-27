@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { fetchCloudData, pushLocalToCloud } from "@/lib/cloud"; 
+import { useEffect, useMemo, useRef, useState } from "react";
+import { fetchCloudData, pushLocalToCloud, pullCloudToLocalMerge, pullCloudToLocalOverwrite } from "@/lib/cloud";
 
 
 type Session = {
@@ -67,17 +67,42 @@ function withinRange(t: Date, start: Date, endExclusive: Date) {
   URL.revokeObjectURL(url);
 }
 export default function StreakPage() {
-  const [importText, setImportText] = useState("");
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [interrupts, setInterrupts] = useState<InterruptLog[]>([]);
+const [importText, setImportText] = useState("");
+const [sessions, setSessions] = useState<Session[]>([]);
+const [interrupts, setInterrupts] = useState<InterruptLog[]>([]); 
+const pushTimerRef = useRef<number | null>(null);
+const lastSigRef = useRef<string>("");
+const hasHydratedRef = useRef(false);
+
+// ✅ 云同步 UI 需要的 state（只保留这一份）
+const [cloudInfo, setCloudInfo] = useState<{ sessions: number; interrupts: number } | null>(null);
+const [cloudErr, setCloudErr] = useState<string | null>(null);
+
 const [pushing, setPushing] = useState(false);
 const [pushMsg, setPushMsg] = useState<string | null>(null);
+
+// ✅ 进页面先读一次云端数量（只保留这一份）
+
+useEffect(() => {
+  // 读本地 sessions/interrupts
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    setSessions(raw ? JSON.parse(raw) : []);
+  } catch { setSessions([]); }
+
+  try {
+    const raw = localStorage.getItem(INTERRUPTS_KEY);
+    setInterrupts(raw ? JSON.parse(raw) : []);
+  } catch { setInterrupts([]); }
+
+  hasHydratedRef.current = true; // ✅ 本地数据已加载完成
+}, []);
 
 useEffect(() => {
   (async () => {
     try {
-      const { sessions, interrupts } = await fetchCloudData();
-      setCloudInfo({ sessions: sessions.length, interrupts: interrupts.length });
+      const fresh = await fetchCloudData();
+      setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
       setCloudErr(null);
     } catch (e: any) {
       setCloudErr(e?.message ?? String(e));
@@ -85,6 +110,7 @@ useEffect(() => {
   })();
 }, []);
 
+// ✅ 推送本地→云端（只保留这一份）
 async function onPushToCloud() {
   setPushing(true);
   setPushMsg(null);
@@ -92,59 +118,151 @@ async function onPushToCloud() {
     const res = await pushLocalToCloud(sessions, interrupts);
     setPushMsg(`✅ 已推送：sessions ${res.sessions} 条；interrupts ${res.interrupts} 条`);
 
-    // 推完再拉一次云端数量刷新显示
     const fresh = await fetchCloudData();
     setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
+    setCloudErr(null);
   } catch (e: any) {
     setPushMsg(`❌ 推送失败：${e?.message ?? String(e)}`);
   } finally {
     setPushing(false);
   }
 }
-const [cloudInfo, setCloudInfo] = useState<{ sessions: number; interrupts: number } | null>(null);
-const [cloudErr, setCloudErr] = useState<string | null>(null);
+// ✅ 自动推送：本地 sessions/interrupts 变化后，3 秒节流推送到云端
+useEffect(() => {
+  // 1) 本地数据还没加载完，不推
+  if (!hasHydratedRef.current) return;
 
-  const now = new Date();
-  const { weekStart, weekEnd } = getWeekRange(now);
+  // 2) 还没登录 / 云端读失败时，不推（避免一直报错）
+  if (cloudErr) return;
 
-  const metrics = useMemo(() => {
-    const todaySessions = sessions.filter((s) => isSameDay(new Date(s.endedAt), now));
-   const todayAttemptCount = todaySessions.length;
-const todayFocusCount = todaySessions.filter((s) => s.status === "done" || s.status === "partial").length;
+  // 3) 生成一个签名，避免无意义重复推
+  const sig = `${sessions.length}-${interrupts.length}-${sessions[0]?.id ?? ""}-${interrupts[0]?.id ?? ""}`;
+  if (sig === lastSigRef.current) return;
+  lastSigRef.current = sig;
 
-    const weekSessions = sessions.filter((s) => {
-      const t = new Date(s.endedAt);
-      return withinRange(t, weekStart, weekEnd);
-    });
+  // 4) 节流：3 秒内多次变化只推一次
+  if (pushTimerRef.current) window.clearTimeout(pushTimerRef.current);
 
-    const weekFocusMinutes = weekSessions
-  .filter((s) => s.status === "done" || s.status === "partial")
-  .reduce((sum, s) => {
-    const start = new Date(s.startedAt).getTime();
-    const end = new Date(s.endedAt).getTime();
-    const mins = Math.max(0, Math.round((end - start) / 60000));
-    return sum + mins;
-  }, 0);
+  pushTimerRef.current = window.setTimeout(async () => {
+    try {
+      // 只在有数据时推（也可以允许 0 推送）
+      if (sessions.length === 0 && interrupts.length === 0) return;
 
-    const todayInterrupts = interrupts.filter((i) => isSameDay(new Date(i.at), now));
-    const todayInterruptCount = todayInterrupts.length;
+      const res = await pushLocalToCloud(sessions, interrupts);
+      setPushMsg(`✅ 自动推送：sessions ${res.sessions}，interrupts ${res.interrupts}`);
 
-    const weekInterrupts = interrupts.filter((i) => {
-      const t = new Date(i.at);
-      return withinRange(t, weekStart, weekEnd);
-    });
-    const weekInterruptCount = weekInterrupts.length;
+      const fresh = await fetchCloudData();
+      setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
+      setCloudErr(null);
+    } catch (e: any) {
+      // 自动推送失败不弹 confirm，不 reload，只显示消息
+      setPushMsg(`⚠️ 自动推送失败：${e?.message ?? String(e)}`);
+    }
+  }, 3000);
 
-   return {
-  todayAttemptCount,
-  todayFocusCount,
-  weekFocusMinutes,
-  todayInterruptCount,
-  weekInterruptCount,
-  todaySessions,
-  todayInterrupts,
-};
-  }, [sessions, interrupts]); // eslint-disable-line react-hooks/exhaustive-deps
+  return () => {
+    if (pushTimerRef.current) window.clearTimeout(pushTimerRef.current);
+  };
+}, [sessions, interrupts, cloudErr]);
+
+// ✅ 拉取云端→本地（合并）
+async function refreshLocalState() {
+  try {
+    const rawS = localStorage.getItem(SESSIONS_KEY);
+    const rawI = localStorage.getItem(INTERRUPTS_KEY);
+    setSessions(rawS ? JSON.parse(rawS) : []);
+    setInterrupts(rawI ? JSON.parse(rawI) : []);
+  } catch {
+    // ignore
+  }
+}
+
+async function onPullMerge() {
+  setPushing(true);
+  setPushMsg(null);
+  try {
+    const res = await pullCloudToLocalMerge();
+    await refreshLocalState();
+    const fresh = await fetchCloudData();
+    setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
+    setCloudErr(null);
+    setPushMsg(`✅ 已拉取合并：sessions ${res.sessions} 条；interrupts ${res.interrupts} 条`);
+  } catch (e: any) {
+    setPushMsg(`❌ 拉取失败：${e?.message ?? String(e)}`);
+  } finally {
+    setPushing(false);
+  }
+}
+
+async function onPullOverwrite() {
+  if (!confirm("确定用云端覆盖本地？本地记录会被替换。")) return;
+  setPushing(true);
+  setPushMsg(null);
+  try {
+    const res = await pullCloudToLocalOverwrite();
+    await refreshLocalState();
+    const fresh = await fetchCloudData();
+    setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
+    setCloudErr(null);
+    setPushMsg(`✅ 已云端覆盖：sessions ${res.sessions} 条；interrupts ${res.interrupts} 条`);
+  } catch (e: any) {
+    setPushMsg(`❌ 覆盖失败：${e?.message ?? String(e)}`);
+  } finally {
+    setPushing(false);
+  }
+}
+
+// ✅ 下面继续你的 metrics/useMemo
+const now = new Date();
+const { weekStart, weekEnd } = getWeekRange(now);
+
+const metrics = useMemo(() => {
+  const last7Start = startOfDay(new Date(now));
+last7Start.setDate(last7Start.getDate() - 6); // 含今天共7天
+
+const recentSessions = sessions.filter((s) => {
+  const t = new Date(s.endedAt);
+  return t.getTime() >= last7Start.getTime() && t.getTime() <= now.getTime();
+});
+  const todayAttemptCount = recentSessions.length;
+  const todayFocusCount = recentSessions.filter(
+    (s) => s.status === "done" || s.status === "partial"
+  ).length;
+
+  const weekSessions = sessions.filter((s) => {
+    const t = new Date(s.endedAt);
+    return withinRange(t, weekStart, weekEnd);
+  });
+
+  const weekFocusMinutes = weekSessions
+    .filter((s) => s.status === "done" || s.status === "partial")
+    .reduce((sum, s) => {
+      const start = new Date(s.startedAt).getTime();
+      const end = new Date(s.endedAt).getTime();
+      const mins = Math.max(0, Math.round((end - start) / 60000));
+      return sum + mins;
+    }, 0);
+
+  const todayInterrupts = interrupts.filter((it) => isSameDay(new Date(it.at), now));
+  const todayInterruptCount = todayInterrupts.length;
+
+  const weekInterrupts = interrupts.filter((it) => {
+    const t = new Date(it.at);
+    return withinRange(t, weekStart, weekEnd);
+  });
+  const weekInterruptCount = weekInterrupts.length;
+
+  // ✅ 关键：一定要 return 一个对象
+  return {
+    todayAttemptCount,
+    todayFocusCount,
+    weekFocusMinutes,
+    todayInterruptCount,
+    weekInterruptCount,
+    recentSessions,
+    todayInterrupts,
+  };
+}, [sessions, interrupts, now, weekStart, weekEnd]);
 
   return (
     <main style={{ padding: 24, fontFamily: "system-ui", maxWidth: 900, margin: "0 auto" }}>
@@ -193,14 +311,17 @@ const todayFocusCount = todaySessions.filter((s) => s.status === "done" || s.sta
     <div style={{ marginTop: 8, opacity: 0.7 }}>读取中...</div>
   )}
 
-  {/* ✅按钮放在三元表达式结束之后，这里最安全 */}
-  <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
-    <button
-      onClick={onPushToCloud}
-      disabled={pushing}
-      style={{ padding: "10px 14px" }}
-    >
-      {pushing ? "推送中..." : "推送本地到云端"}
+  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+    <button onClick={onPushToCloud} disabled={pushing} style={{ padding: "10px 14px" }}>
+      {pushing ? "处理中..." : "推送本地到云端"}
+    </button>
+
+    <button onClick={onPullMerge} disabled={pushing} style={{ padding: "10px 14px" }}>
+      从云端拉取（合并）
+    </button>
+
+    <button onClick={onPullOverwrite} disabled={pushing} style={{ padding: "10px 14px" }}>
+      云端覆盖本地
     </button>
 
     {pushMsg ? <span style={{ fontSize: 13, opacity: 0.85 }}>{pushMsg}</span> : null}
@@ -260,6 +381,26 @@ const todayFocusCount = todaySessions.filter((s) => s.status === "done" || s.sta
     >
       导入（覆盖本地）
     </button>
+    <button
+  onClick={async () => {
+    const res = await pullCloudToLocalMerge();
+    alert(`已合并拉取：sessions ${res.sessions} / interrupts ${res.interrupts}`);
+    window.location.reload();
+  }}
+>
+  从云端拉取（合并）
+</button>
+
+<button
+  onClick={async () => {
+    if (!confirm("确定用云端覆盖本地？")) return;
+    const res = await pullCloudToLocalOverwrite();
+    alert(`已覆盖拉取：sessions ${res.sessions} / interrupts ${res.interrupts}`);
+    window.location.reload();
+  }}
+>
+  云端覆盖本地
+</button>
   </div>
 
   <div style={{ marginTop: 12 }}>
@@ -281,4 +422,5 @@ const todayFocusCount = todaySessions.filter((s) => s.status === "done" || s.sta
       </p>
     </main>
   );
+  console.log("bad session ids:", sessions.filter(s => !s.id));
 }
