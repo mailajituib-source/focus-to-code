@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchCloudData, pushLocalToCloud, pullCloudToLocalMerge, pullCloudToLocalOverwrite } from "@/lib/cloud";
+import CloudSyncPanel from "@/app/components/CloudSyncPanel";
 
 
 type Session = {
@@ -76,47 +77,9 @@ export default function StreakPage() {
 const [importText, setImportText] = useState("");
 const [sessions, setSessions] = useState<Session[]>([]);
 const [interrupts, setInterrupts] = useState<InterruptLog[]>([]); 
-const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
-const pushTimerRef = useRef<number | null>(null);
-const lastSigRef = useRef<string>("");
-const hasHydratedRef = useRef(false);
 
 
-// ✅ 云同步 UI 需要的 state（只保留这一份）
-const [cloudInfo, setCloudInfo] = useState<{ sessions: number; interrupts: number } | null>(null);
-const [cloudErr, setCloudErr] = useState<string | null>(null);
 
-const [pushing, setPushing] = useState(false);
-const [pushMsg, setPushMsg] = useState<string | null>(null);
-
-// ✅ 进页面先读一次云端数量（只保留这一份）
-
-// ① 监听同步状态（SYNC_STATUS_KEY）
-useEffect(() => {
-  const read = () => {
-    try {
-      const raw = localStorage.getItem(SYNC_STATUS_KEY);
-      setSyncStatus(raw ? (JSON.parse(raw) as SyncStatus) : null);
-    } catch {
-      setSyncStatus(null);
-    }
-  };
-
-  read();
-
-  const onCustom = () => read();
-  window.addEventListener("focus_to_code_sync_status", onCustom);
-
-  const onStorage = (e: StorageEvent) => {
-    if (e.key === SYNC_STATUS_KEY) read();
-  };
-  window.addEventListener("storage", onStorage);
-
-  return () => {
-    window.removeEventListener("focus_to_code_sync_status", onCustom);
-    window.removeEventListener("storage", onStorage);
-  };
-}, []);
 
 // ② 读取本地 sessions/interrupts（原来你嵌套在 useEffect 里了，现在独立出来）
 useEffect(() => {
@@ -134,118 +97,22 @@ useEffect(() => {
     setInterrupts([]);
   }
 
-  hasHydratedRef.current = true;
 }, []);
 
-// ③ 进页面读云端数量
-useEffect(() => {
-  (async () => {
+<CloudSyncPanel
+  sessions={sessions}
+  interrupts={interrupts}
+  onLocalRefresh={() => {
     try {
-      const fresh = await fetchCloudData();
-      setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
-      setCloudErr(null);
-    } catch (e: any) {
-      setCloudErr(e?.message ?? String(e));
+      const rawS = localStorage.getItem(SESSIONS_KEY);
+      const rawI = localStorage.getItem(INTERRUPTS_KEY);
+      setSessions(rawS ? JSON.parse(rawS) : []);
+      setInterrupts(rawI ? JSON.parse(rawI) : []);
+    } catch {
+      // ignore
     }
-  })();
-}, []);
-
-// ✅ 推送本地→云端（只保留这一份）
-async function onPushToCloud() {
-  setPushing(true);
-  setPushMsg(null);
-  try {
-    const res = await pushLocalToCloud(sessions, interrupts);
-    setPushMsg(`✅ 已推送：sessions ${res.sessions} 条；interrupts ${res.interrupts} 条`);
-
-    const fresh = await fetchCloudData();
-    setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
-    setCloudErr(null);
-  } catch (e: any) {
-    setPushMsg(`❌ 推送失败：${e?.message ?? String(e)}`);
-  } finally {
-    setPushing(false);
-  }
-}
-// ✅ 自动推送：本地 sessions/interrupts 变化后，3 秒节流推送到云端
-// ✅ 自动推送：本地 sessions/interrupts 变化后，3 秒节流推送到云端
-useEffect(() => {
-  if (!hasHydratedRef.current) return;
-  if (cloudErr) return;
-
-  const sig = `${sessions.length}-${interrupts.length}-${sessions[0]?.id ?? ""}-${interrupts[0]?.id ?? ""}`;
-  if (sig === lastSigRef.current) return;
-  lastSigRef.current = sig;
-
-  if (pushTimerRef.current) window.clearTimeout(pushTimerRef.current);
-
-  pushTimerRef.current = window.setTimeout(async () => {
-    try {
-      if (sessions.length === 0 && interrupts.length === 0) return;
-
-      const res = await pushLocalToCloud(sessions, interrupts);
-      setPushMsg(`✅ 自动推送：sessions ${res.sessions}，interrupts ${res.interrupts}`);
-
-      const fresh = await fetchCloudData();
-      setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
-      setCloudErr(null);
-    } catch (e: any) {
-      setPushMsg(`⚠️ 自动推送失败：${e?.message ?? String(e)}`);
-    }
-  }, 3000);
-
-  // ✅ 必须有：组件卸载/依赖变化时清掉上一次 timer
-  return () => {
-    if (pushTimerRef.current) window.clearTimeout(pushTimerRef.current);
-  };
-}, [sessions, interrupts, cloudErr]);
-
-// ✅ 拉取云端→本地（合并）
-async function refreshLocalState() {
-  try {
-    const rawS = localStorage.getItem(SESSIONS_KEY);
-    const rawI = localStorage.getItem(INTERRUPTS_KEY);
-    setSessions(rawS ? JSON.parse(rawS) : []);
-    setInterrupts(rawI ? JSON.parse(rawI) : []);
-  } catch {
-    // ignore
-  }
-}
-
-async function onPullMerge() {
-  setPushing(true);
-  setPushMsg(null);
-  try {
-    const res = await pullCloudToLocalMerge();
-    await refreshLocalState();
-    const fresh = await fetchCloudData();
-    setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
-    setCloudErr(null);
-    setPushMsg(`✅ 已拉取合并：sessions ${res.sessions} 条；interrupts ${res.interrupts} 条`);
-  } catch (e: any) {
-    setPushMsg(`❌ 拉取失败：${e?.message ?? String(e)}`);
-  } finally {
-    setPushing(false);
-  }
-}
-
-async function onPullOverwrite() {
-  if (!confirm("确定用云端覆盖本地？本地记录会被替换。")) return;
-  setPushing(true);
-  setPushMsg(null);
-  try {
-    const res = await pullCloudToLocalOverwrite();
-    await refreshLocalState();
-    const fresh = await fetchCloudData();
-    setCloudInfo({ sessions: fresh.sessions.length, interrupts: fresh.interrupts.length });
-    setCloudErr(null);
-    setPushMsg(`✅ 已云端覆盖：sessions ${res.sessions} 条；interrupts ${res.interrupts} 条`);
-  } catch (e: any) {
-    setPushMsg(`❌ 覆盖失败：${e?.message ?? String(e)}`);
-  } finally {
-    setPushing(false);
-  }
-}
+  }}
+/>
 
 // ✅ 下面继续你的 metrics/useMemo
 const now = new Date();
@@ -347,44 +214,20 @@ return (
       </div>
     </section>
 
-    {/* === 云同步状态区 === */}
-    <section style={{ marginTop: 16, padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
-      <div style={{ fontWeight: 700 }}>云同步状态（Supabase）</div>
-
-      <div style={{ marginTop: 6, fontSize: 13, opacity: 0.75 }}>
-        同步状态：
-        {syncStatus?.state === "syncing" && "同步中…"}
-        {syncStatus?.state === "synced" && "已同步 ✅"}
-        {syncStatus?.state === "failed" && `同步失败 ⚠️ ${syncStatus.reason ?? ""}`}
-        {(!syncStatus || syncStatus.state === "idle") && "空闲"}
-      </div>
-
-      {cloudErr ? (
-        <div style={{ color: "crimson", marginTop: 8 }}>读取失败：{cloudErr}</div>
-      ) : cloudInfo ? (
-        <div style={{ marginTop: 8, opacity: 0.85 }}>
-          云端 sessions：{cloudInfo.sessions} 条；interrupts：{cloudInfo.interrupts} 条
-        </div>
-      ) : (
-        <div style={{ marginTop: 8, opacity: 0.7 }}>读取中...</div>
-      )}
-
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-        <button onClick={onPushToCloud} disabled={pushing} style={{ padding: "10px 14px" }}>
-          {pushing ? "处理中..." : "推送本地到云端"}
-        </button>
-
-        <button onClick={onPullMerge} disabled={pushing} style={{ padding: "10px 14px" }}>
-          从云端拉取（合并）
-        </button>
-
-        <button onClick={onPullOverwrite} disabled={pushing} style={{ padding: "10px 14px" }}>
-          云端覆盖本地
-        </button>
-
-        {pushMsg ? <span style={{ fontSize: 13, opacity: 0.85 }}>{pushMsg}</span> : null}
-      </div>
-    </section>
+<CloudSyncPanel
+  sessions={sessions}
+  interrupts={interrupts}
+  onLocalRefresh={() => {
+    try {
+      const rawS = localStorage.getItem(SESSIONS_KEY);
+      const rawI = localStorage.getItem(INTERRUPTS_KEY);
+      setSessions(rawS ? JSON.parse(rawS) : []);
+      setInterrupts(rawI ? JSON.parse(rawI) : []);
+    } catch {
+      // ignore
+    }
+  }}
+/>
 
     {/* === 今天的拦截记录区 === */}
     <section style={{ marginTop: 16, padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
