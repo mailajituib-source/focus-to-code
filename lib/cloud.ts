@@ -1,6 +1,8 @@
 // lib/cloud.ts
-import { getSupabaseClient } from "@/lib/supabaseClient";
+import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
+const supabase = getSupabaseBrowserClient();
+// ... 后面是 requireUserId / fetchCloudData / pushLocalToCloud ...
 export type LocalSession = {
   id: string; // 本地 id（string）
   taskId: string;
@@ -24,7 +26,7 @@ const SESSIONS_KEY = "focus_to_code_sessions_v1";
 const INTERRUPTS_KEY = "focus_to_code_interrupts_v1";
 
 async function requireUserId() {
-  const supabase = getSupabaseClient();
+
   const { data, error } = await supabase.auth.getUser();
   if (error) throw error;
   const uid = data.user?.id;
@@ -36,7 +38,6 @@ async function requireUserId() {
  * ✅ 云端读取（给 streak “云端数量/云端拉取”用）
  */
 export async function fetchCloudData() {
-  const supabase = getSupabaseClient();
   const userId = await requireUserId();
 
   const [sRes, iRes] = await Promise.all([
@@ -71,7 +72,6 @@ export async function pushLocalToCloud(
   localSessions: LocalSession[],
   localInterrupts: LocalInterrupt[]
 ) {
-  const supabase = getSupabaseClient();
   const userId = await requireUserId();
 
   const sessionsRows = localSessions.map((s) => ({

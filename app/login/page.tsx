@@ -1,56 +1,65 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-async function sendLink() {
-  setMsg(null);
+  async function sendLink() {
+    const supabase = getSupabaseBrowserClient();
+    setLoading(true);
+    setMsg(null);
 
-  try {
-    const { error } = await supabase.auth.signInWithOtp({
-  email,
-  options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-});
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
 
-if (error) {
-  console.error("signInWithOtp error:", error);
-  setMsg(`发送失败：${error.message}`);
-}
-
-    setMsg("✅ 已发送登录链接，请检查邮箱");
-  } catch (e: any) {
-    console.error("signInWithOtp exception:", e);
-    setMsg("❌ 网络请求失败（Failed to fetch）。请检查 Supabase 域名是否可访问、代理/网络是否拦截。");
+      if (error) {
+        console.error("signInWithOtp error:", error);
+        setMsg(`发送失败：${error.message}`);
+      } else {
+        setMsg("登录邮件已发送，请检查邮箱点击 Magic Link。");
+      }
+    } catch (e: any) {
+      setMsg(`发送失败：${e?.message ?? String(e)}`);
+    } finally {
+      setLoading(false);
+    }
   }
-}
 
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui", maxWidth: 520, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 24 }}>登录</h1>
-      <p style={{ opacity: 0.8 }}>输入邮箱，我们会发你一个登录链接（免密码）。</p>
+    <main style={{ padding: 24, fontFamily: "system-ui" }}>
+      <h1 style={{ fontSize: 24, marginBottom: 12 }}>邮箱登录</h1>
 
-      <input
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        placeholder="you@example.com"
-        style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-      />
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 320 }}>
+        <input
+          type="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          style={{ padding: 8, borderRadius: 6, border: "1px solid #ccc" }}
+        />
+        <button
+          onClick={sendLink}
+          disabled={loading || !email}
+          style={{ padding: "8px 12px", borderRadius: 6 }}
+        >
+          {loading ? "发送中…" : "发送登录链接"}
+        </button>
+      </div>
 
-      <button onClick={sendLink} style={{ marginTop: 12, padding: "10px 14px" }} disabled={!email.includes("@")}>
-        发送登录链接
-      </button>
-
-      {sent ? <p style={{ marginTop: 12 }}>已发送，请去邮箱点击登录链接。</p> : null}
-      {msg ? <p style={{ marginTop: 12, color: "crimson" }}>{msg}</p> : null}
-
-      <p style={{ marginTop: 18 }}>
-        <a href="/">← 返回首页</a>
-      </p>
+      {msg && (
+        <p style={{ marginTop: 12, fontSize: 13, opacity: 0.8 }}>
+          {msg}
+        </p>
+      )}
     </main>
   );
-}   
+}
